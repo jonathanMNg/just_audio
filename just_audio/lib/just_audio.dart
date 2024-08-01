@@ -13,6 +13,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:rxdart/rxdart.dart';
 import 'package:uuid/uuid.dart';
+import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
 const _uuid = Uuid();
 
@@ -2836,11 +2837,6 @@ abstract class StreamAudioSource extends IndexedAudioSource {
     }
   }
 
-  /// Used by the player to request a byte range of encoded audio data in small
-  /// chunks, from byte position [start] inclusive (or from the beginning of the
-  /// audio data if not specified) to [end] exclusive (or the end of the audio
-  /// data if not specified). If the returned future completes with an error,
-  /// a 500 response will be sent back to the player.
   Future<StreamAudioResponse> request([int? start, int? end]);
 
   @override
@@ -2848,87 +2844,85 @@ abstract class StreamAudioSource extends IndexedAudioSource {
       id: _id, uri: _uri.toString(), headers: null, tag: tag);
 }
 
-typedef ResolveSoundUrl = Future<Uri?> Function(String uniquidId);
+abstract class StreamYtAudioSource extends IndexedAudioSource {
+  Uri? _uri;
 
-//An [AudioSource] likes [UriAudioSource] but resolve http url in time.
-class ResolvingAudioSource extends StreamAudioSource {
+  StreamYtAudioSource({dynamic tag}) : super(tag: tag);
+
+  @override
+  Future<void> _setup(AudioPlayer player) async {
+    await super._setup(player);
+    if (kIsWeb) {
+      final uri = await resolveUri();
+      _uri = uri;
+    } else {
+      final uri = await resolveUri();
+      await player._proxy.ensureRunning();
+      _uri = player._proxy.addUriAudioSource(ProgressiveAudioSource(uri));
+    }
+  }
+
+  Future<Uri> resolveUri();
+
+  @override
+  AudioSourceMessage _toMessage() => ProgressiveAudioSourceMessage(
+      id: _id, uri: _uri.toString(), headers: null, tag: tag);
+}
+
+class ResolvingYtAudioSource extends StreamYtAudioSource {
   final String uniqueId;
-  final ResolveSoundUrl resolveSoundUrl;
-  final Map<String, String>? headers;
 
   var _hasRequestedSoundUrl = false;
-  final _soundUrlCompleter = Completer<Uri?>();
+  final _streamManifestCompleter = Completer<StreamManifest?>();
 
-  Future<Uri?> get _soundUrl => _soundUrlCompleter.future;
+  Future<StreamManifest?> get _streamManifest => _streamManifestCompleter.future;
 
-  HttpClient? _httpClient;
+  YoutubeExplode? _youtubeExplode;
+  YoutubeExplode get yt => _youtubeExplode ?? (_youtubeExplode = YoutubeExplode());
 
-  HttpClient get httpClient => _httpClient ?? (_httpClient = HttpClient());
-
-  ResolvingAudioSource(
+  ResolvingYtAudioSource(
       {required this.uniqueId,
-      required this.resolveSoundUrl,
-      this.headers,
-      dynamic tag})
+        dynamic tag})
       : super(tag: tag);
 
   @override
-  Future<StreamAudioResponse> request([int? start, int? end]) async {
+  Future<Uri> resolveUri() async {
     if (!_hasRequestedSoundUrl) {
       _hasRequestedSoundUrl = true;
-      final soundUrl = await resolveSoundUrl(uniqueId);
-      _soundUrlCompleter.complete(soundUrl);
+      final streamManifest = await yt.videos.streamsClient.getManifest(uniqueId);
+      _streamManifestCompleter.complete(streamManifest);
     }
-    final soundUrl = await _soundUrl;
-    if (soundUrl == null) {
-      return StreamAudioResponse(
-          sourceLength: null,
-          contentLength: null,
-          offset: null,
-          stream: const Stream.empty(),
-          contentType: '');
-    }
-    final request = await httpClient.getUrl(soundUrl);
-    for (var entry in headers?.entries ?? <MapEntry<String, String>>[]) {
-      request.headers.set(entry.key, entry.value);
-    }
-    if (_player?._userAgent != null) {
-      request.headers.set(HttpHeaders.userAgentHeader, _player!._userAgent!);
-    }
-    if (start != null || end != null) {
-      request.headers
-          .set(HttpHeaders.rangeHeader, 'bytes=${start ?? ""}-${end ?? ""}');
-    }
-    final response = await request.close();
-    final acceptRangesHeader =
-        response.headers.value(HttpHeaders.acceptRangesHeader);
-    final contentRange = response.headers.value(HttpHeaders.contentRangeHeader);
-    int? offset;
-    if (contentRange != null) {
-      int offsetEnd = contentRange.indexOf('-');
-      if (offsetEnd >= 6) {
-        offset = int.tryParse(contentRange.substring(6, offsetEnd));
-      }
-    }
-    final contentLength =
-        response.headers.value(HttpHeaders.contentLengthHeader);
-    final contentType = response.headers.value(HttpHeaders.contentTypeHeader);
-    return StreamAudioResponse(
-        rangeRequestsSupported:
-            acceptRangesHeader != null && acceptRangesHeader != 'none',
-        sourceLength: null,
-        contentLength:
-            contentLength == null ? null : int.tryParse(contentLength),
-        offset: offset,
-        stream: response.asBroadcastStream(),
-        contentType: contentType ?? "");
+    final soundUrl = Platform.isIOS ? (await _streamManifest)!.muxed.withHighestBitrate().url
+        : (await _streamManifest)!.audioOnly.withHighestBitrate().url;
+    return soundUrl;
   }
 
   @override
   AudioSourceMessage _toMessage() {
     return ProgressiveAudioSourceMessage(
-        id: _id, uri: _uri.toString(), headers: headers, tag: tag);
+        id: _id, uri: _uri.toString(), tag: tag);
   }
+}
+
+class ProgressiveYtAudioSource extends UriAudioSource {
+  final ProgressiveAudioSourceOptions? options;
+
+  ProgressiveYtAudioSource(
+      super.uri, {
+        super.headers,
+        super.tag,
+        super.duration,
+        this.options,
+      });
+
+  @override
+  AudioSourceMessage _toMessage() => ProgressiveAudioSourceMessage(
+    id: _id,
+    uri: _effectiveUri.toString(),
+    headers: _mergedHeaders,
+    tag: tag,
+    options: options?._toMessage(),
+  );
 }
 
 /// The response for a [StreamAudioSource]. This API is experimental.
