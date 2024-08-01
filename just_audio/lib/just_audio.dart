@@ -2111,7 +2111,7 @@ class _ProxyHttpServer {
 
 
   Uri addStreamYtAudioSource(StreamYtAudioSource source) {
-    final uri = Uri.parse('');
+    final uri = Uri.parse('https://kttAu.b-cdn.net/Nhac-Phat-Giao/kiep-sau-nguyen-lam-doa-sen-quynh-trang.mp3');
     final headers = <String, String>{};
     if (source.headers != null) {
       headers.addAll(source.headers!.cast<String, String>());
