@@ -2914,7 +2914,6 @@ class ResolvingYtAudioSource extends StreamYtAudioSource {
       _soundUrlCompleter.complete(soundUrl);
     }
     final soundUrl = await _soundUrl;
-    print(soundUrl);
     // final soundUrl = Uri.parse('https://kttAu.b-cdn.net/Nhac-Phat-Giao/kiep-sau-nguyen-lam-doa-sen-quynh-trang.mp3');
     return soundUrl!;
   }
