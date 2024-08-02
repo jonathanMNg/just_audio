@@ -28,7 +28,6 @@ dependencies:
   uuid: '>=3.0.1 <5.0.0'
   crypto: ^3.0.0
   meta: ^1.3.0
-  youtube_explode_dart: ^2.2.1
   flutter:
     sdk: flutter
 
