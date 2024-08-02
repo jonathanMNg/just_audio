@@ -2110,7 +2110,7 @@ class _ProxyHttpServer {
 
 
   Uri addStreamYtAudioSource(StreamYtAudioSource source) {
-    final uri = Uri.parse('https://kttAu.b-cdn.net/Nhac-Phat-Giao/kiep-sau-nguyen-lam-doa-sen-quynh-trang.mp3');
+    final uri = _sourceYtUri(source);
     final headers = <String, String>{};
     if (source.headers != null) {
       headers.addAll(source.headers!.cast<String, String>());
@@ -2133,6 +2133,9 @@ class _ProxyHttpServer {
   }
 
   Uri _sourceUri(StreamAudioSource source) => Uri.http(
+      '${InternetAddress.loopbackIPv4.address}:$port', '/id/${source._id}');
+
+  Uri _sourceYtUri(StreamYtAudioSource source) => Uri.http(
       '${InternetAddress.loopbackIPv4.address}:$port', '/id/${source._id}');
 
   /// A unique key for each request that can be processed by this proxy,
@@ -2913,6 +2916,7 @@ class ResolvingYtAudioSource extends StreamYtAudioSource {
       _soundUrlCompleter.complete(soundUrl);
     }
     final soundUrl = await _soundUrl;
+    // print(soundUrl);
     // final soundUrl = Uri.parse('https://kttAu.b-cdn.net/Nhac-Phat-Giao/kiep-sau-nguyen-lam-doa-sen-quynh-trang.mp3');
     return soundUrl!;
   }
@@ -3639,9 +3643,9 @@ _ProxyHandler _proxyHandlerForYtSource(
       await _getUrl(client, redirectedUri ?? uri, headers: requestHeaders);
       host = originRequest.headers.value(HttpHeaders.hostHeader);
       final originResponse = await originRequest.close();
-      if (originResponse.redirects.isNotEmpty) {
-        redirectedUri = originResponse.redirects.last.location;
-      }
+      // if (originResponse.redirects.isNotEmpty) {
+      //   redirectedUri = originResponse.redirects.last.location;
+      // }
 
       request.response.headers.clear();
       originResponse.headers.forEach((name, value) {
