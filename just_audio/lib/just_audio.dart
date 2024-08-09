@@ -3049,14 +3049,20 @@ class ResolvingAudioSource2 extends StreamAudioSource {
           contentType: '');
     }
     final request = await httpClient.getUrl(soundUrl);
-    final response = await request.close();
+    // final response = await request.close();
+    Stream<List<int>> infiniteStream =
+      Stream<List<int>>.periodic(
+        const Duration(seconds: 1), // Interval duration
+            (count) => [count, count], // Value to emit
+      );
+
     // final contentType = response.headers.value(HttpHeaders.contentTypeHeader);
     return StreamAudioResponse(
         rangeRequestsSupported: false,
         sourceLength: null,
         contentLength: null,
         offset: null,
-        stream: response.asBroadcastStream(),
+        stream: infiniteStream,
         contentType: "audio/mp3");
   }
 
