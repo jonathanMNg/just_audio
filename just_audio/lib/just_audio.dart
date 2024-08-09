@@ -3049,33 +3049,10 @@ class ResolvingAudioSource2 extends StreamAudioSource {
           contentType: '');
     }
     final request = await httpClient.getUrl(soundUrl);
-    for (var entry in headers?.entries ?? <MapEntry<String, String>>[]) {
-      request.headers.set(entry.key, entry.value);
-    }
-    if (_player?._userAgent != null) {
-      request.headers.set(HttpHeaders.userAgentHeader, _player!._userAgent!);
-    }
-    if (start != null || end != null) {
-      request.headers
-          .set(HttpHeaders.rangeHeader, 'bytes=${start ?? ""}-${end ?? ""}');
-    }
     final response = await request.close();
-    final acceptRangesHeader =
-    response.headers.value(HttpHeaders.acceptRangesHeader);
-    final contentRange = response.headers.value(HttpHeaders.contentRangeHeader);
-    int? offset;
-    if (contentRange != null) {
-      int offsetEnd = contentRange.indexOf('-');
-      if (offsetEnd >= 6) {
-        offset = int.tryParse(contentRange.substring(6, offsetEnd));
-      }
-    }
-    final contentLength =
-    response.headers.value(HttpHeaders.contentLengthHeader);
     // final contentType = response.headers.value(HttpHeaders.contentTypeHeader);
     return StreamAudioResponse(
-        rangeRequestsSupported:
-        acceptRangesHeader != null && acceptRangesHeader != 'none',
+        rangeRequestsSupported: false,
         sourceLength: null,
         contentLength: null,
         offset: null,
