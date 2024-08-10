@@ -2873,15 +2873,9 @@ abstract class StreamYtAudioSource extends IndexedAudioSource {
     if (kIsWeb) {
       final uri = await resolveUri();
       _uri = uri;
-      // final response = await request();
-      // _uri = _encodeDataUrl(await base64.encoder.bind(response.stream).join(),
-      //     response.contentType);
     } else {
-      // final uri = await resolveUri();
       await player._proxy.ensureRunning();
       _uri = player._proxy.addStreamYtAudioSource(this);
-      // await player._proxy.ensureRunning();
-      // _uri = player._proxy.addStreamAudioSource(this as StreamAudioSource);
     }
   }
 
@@ -3049,20 +3043,14 @@ class ResolvingAudioSource2 extends StreamAudioSource {
           contentType: '');
     }
     final request = await httpClient.getUrl(soundUrl);
-    // final response = await request.close();
-    Stream<List<int>> infiniteStream =
-      Stream<List<int>>.periodic(
-        const Duration(seconds: 1), // Interval duration
-            (count) => [count, count], // Value to emit
-      );
+    final response = await request.close();
 
-    // final contentType = response.headers.value(HttpHeaders.contentTypeHeader);
     return StreamAudioResponse(
         rangeRequestsSupported: false,
         sourceLength: null,
         contentLength: null,
         offset: null,
-        stream: infiniteStream,
+        stream: response.asBroadcastStream(),
         contentType: "audio/mp3");
   }
 
@@ -3074,6 +3062,42 @@ class ResolvingAudioSource2 extends StreamAudioSource {
 }
 
 
+class ResolvingAudioSource3 extends StreamAudioSource {
+  final List<int> soundBytes;
+
+  ResolvingAudioSource3(
+      {required this.soundBytes,
+        dynamic tag})
+      : super(tag: tag);
+
+  @override
+  Future<StreamAudioResponse> request([int? start, int? end]) async {
+    Stream<List<int>> generateInfiniteSilentMp3Stream() async* {
+      // Load the silent MP3 data
+      List<int> silentMp3Data = soundBytes;
+
+      while (true) {
+        // Emit the silent MP3 data repeatedly
+        yield silentMp3Data;
+      }
+    }
+    final infiniteStream = generateInfiniteSilentMp3Stream();
+
+    return StreamAudioResponse(
+        rangeRequestsSupported: false,
+        sourceLength: null,
+        contentLength: null,
+        offset: null,
+        stream: infiniteStream.asBroadcastStream(),
+        contentType: "audio/mp3");
+  }
+
+  @override
+  AudioSourceMessage _toMessage() {
+    return ProgressiveAudioSourceMessage(
+        id: _id, uri: _uri.toString(), headers: null, tag: tag);
+  }
+}
 /// The response for a [StreamAudioSource]. This API is experimental.
 @experimental
 class StreamAudioResponse {
