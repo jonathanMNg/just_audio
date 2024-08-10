@@ -3078,6 +3078,8 @@ class ResolvingAudioSource3 extends StreamAudioSource {
 
       while (true) {
         // Emit the silent MP3 data repeatedly
+        await Future.delayed(const Duration(seconds: 1), () {
+        });
         yield silentMp3Data;
       }
     }
