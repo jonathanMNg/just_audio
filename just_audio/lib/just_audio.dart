@@ -3004,68 +3004,10 @@ class ResolvingAudioSource extends StreamAudioSource {
   }
 }
 
-
-class ResolvingAudioSource2 extends StreamAudioSource {
-  final String uniqueId;
-  final ResolveSoundUrl resolveSoundUrl;
-  final Map<String, String>? headers;
-
-  var _hasRequestedSoundUrl = false;
-  final _soundUrlCompleter = Completer<Uri?>();
-
-  Future<Uri?> get _soundUrl => _soundUrlCompleter.future;
-
-  HttpClient? _httpClient;
-
-  HttpClient get httpClient => _httpClient ?? (_httpClient = HttpClient());
-
-  ResolvingAudioSource2(
-      {required this.uniqueId,
-        required this.resolveSoundUrl,
-        this.headers,
-        dynamic tag})
-      : super(tag: tag);
-
-  @override
-  Future<StreamAudioResponse> request([int? start, int? end]) async {
-    if (!_hasRequestedSoundUrl) {
-      _hasRequestedSoundUrl = true;
-      final soundUrl = await resolveSoundUrl(uniqueId);
-      _soundUrlCompleter.complete(soundUrl);
-    }
-    final soundUrl = await _soundUrl;
-    if (soundUrl == null) {
-      return StreamAudioResponse(
-          sourceLength: null,
-          contentLength: null,
-          offset: null,
-          stream: const Stream.empty(),
-          contentType: '');
-    }
-    final request = await httpClient.getUrl(soundUrl);
-    final response = await request.close();
-
-    return StreamAudioResponse(
-        rangeRequestsSupported: false,
-        sourceLength: null,
-        contentLength: null,
-        offset: null,
-        stream: response.asBroadcastStream(),
-        contentType: "audio/mp3");
-  }
-
-  @override
-  AudioSourceMessage _toMessage() {
-    return ProgressiveAudioSourceMessage(
-        id: _id, uri: _uri.toString(), headers: headers, tag: tag);
-  }
-}
-
-
-class ResolvingAudioSource3 extends StreamAudioSource {
+class InfiniteSilenceAudioSource extends StreamAudioSource {
   final List<int> soundBytes;
 
-  ResolvingAudioSource3(
+  InfiniteSilenceAudioSource(
       {required this.soundBytes,
         dynamic tag})
       : super(tag: tag);
@@ -3073,11 +3015,8 @@ class ResolvingAudioSource3 extends StreamAudioSource {
   @override
   Future<StreamAudioResponse> request([int? start, int? end]) async {
     Stream<List<int>> generateInfiniteSilentMp3Stream() async* {
-      // Load the silent MP3 data
       List<int> silentMp3Data = soundBytes;
-
       while (true) {
-        // Emit the silent MP3 data repeatedly
         await Future.delayed(const Duration(seconds: 1), () {
         });
         yield silentMp3Data;

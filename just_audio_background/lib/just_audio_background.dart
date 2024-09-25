@@ -28,7 +28,7 @@ class JustAudioBackground {
   /// }
   /// ```
   ///
-  /// Each parameter controls a behaviour in audio_service. Consult
+  /// Each parameter controls a behaviour in q`. Consult
   /// audio_service's `AudioServiceConfig` API documentation for more
   /// information.
   static Future<void> init({
