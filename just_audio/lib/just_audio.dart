@@ -2894,8 +2894,6 @@ class ResolvingYtAudioSource extends StreamYtAudioSource {
   var _hasRequestedSoundUrl = false;
   final _soundUrlCompleter = Completer<Uri?>();
 
-  Future<Uri?> get _soundUrl => _soundUrlCompleter.future;
-
   ResolvingYtAudioSource(
       {required this.uniqueId,
         required this.resolveSoundUrl,
@@ -2909,8 +2907,7 @@ class ResolvingYtAudioSource extends StreamYtAudioSource {
       final soundUrl = await resolveSoundUrl(uniqueId);
       _soundUrlCompleter.complete(soundUrl);
     }
-    final soundUrl = await _soundUrl;
-    // final soundUrl = Uri.parse('https://kttAu.b-cdn.net/Nhac-Phat-Giao/kiep-sau-nguyen-lam-doa-sen-quynh-trang.mp3');
+    final soundUrl = await _soundUrlCompleter.future;
     return soundUrl!;
   }
 
@@ -3653,9 +3650,14 @@ _ProxyHandler _proxyHandlerForYtSource(
       Map<String, String>? headers,
       String? userAgent,
     }) {
-  // Keep redirected [Uri] to speed-up requests
   Uri? redirectedUri;
+  // Keep redirected [Uri] to speed-up requests
   Future<void> handler(_ProxyHttpServer server, HttpRequest request) async {
+
+    Stopwatch? stopwatch;
+    if(kDebugMode) {
+      stopwatch = Stopwatch()..start();
+    }
     final client = _createHttpClient(userAgent: userAgent);
     Uri uri = await source.resolveUri();
     // Try to make normal request
@@ -3667,12 +3669,12 @@ _ProxyHandler _proxyHandlerForYtSource(
       // write supplied headers last (to ensure supplied headers aren't overwritten)
       headers?.forEach((name, value) => requestHeaders[name] = value);
       final originRequest =
-      await _getUrl(client, redirectedUri ?? uri, headers: requestHeaders);
+      await _getUrl(client, redirectedUri??uri, headers: requestHeaders);
       host = originRequest.headers.value(HttpHeaders.hostHeader);
       final originResponse = await originRequest.close();
-      // if (originResponse.redirects.isNotEmpty) {
-      //   redirectedUri = originResponse.redirects.last.location;
-      // }
+      if (originResponse.redirects.isNotEmpty) {
+        redirectedUri = originResponse.redirects.last.location;
+      }
 
       request.response.headers.clear();
       originResponse.headers.forEach((name, value) {
@@ -3767,7 +3769,13 @@ _ProxyHandler _proxyHandlerForYtSource(
         await done.future;
       }
     }
+
+    if(kDebugMode) {
+      print('loading proxy time ${stopwatch?.elapsedMilliseconds}');
+      stopwatch?.stop();
+    }
   }
+
 
   return handler;
 }
