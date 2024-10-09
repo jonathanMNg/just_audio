@@ -2920,7 +2920,6 @@ class ResolvingYtAudioSource extends StreamYtAudioSource {
 
 typedef ResolveSoundUrl = Future<Uri?> Function(String uniquidId);
 
-//An [AudioSource] likes [UriAudioSource] but resolve http url in time.
 class ResolvingAudioSource extends StreamAudioSource {
   final String uniqueId;
   final ResolveSoundUrl resolveSoundUrl;
@@ -3000,6 +2999,86 @@ class ResolvingAudioSource extends StreamAudioSource {
         id: _id, uri: _uri.toString(), headers: headers, tag: tag);
   }
 }
+//
+//
+// class YtAudioSource extends StreamAudioSource {
+//   final String uniqueId;
+//   final ResolveSoundUrl resolveSoundUrl;
+//   final Map<String, String>? headers;
+//
+//   var _hasRequestedSoundUrl = false;
+//   final _soundUrlCompleter = Completer<Uri?>();
+//
+//   Future<Uri?> get _soundUrl => _soundUrlCompleter.future;
+//
+//   HttpClient? _httpClient;
+//
+//   HttpClient get httpClient => _httpClient ?? (_httpClient = HttpClient());
+//
+//   YtAudioSource(
+//       {required this.uniqueId,
+//         required this.resolveSoundUrl,
+//         this.headers,
+//         dynamic tag})
+//       : super(tag: tag);
+//
+//   @override
+//   Future<StreamAudioResponse> request([int? start, int? end]) async {
+//     if (!_hasRequestedSoundUrl) {
+//       _hasRequestedSoundUrl = true;
+//       final soundUrl = await resolveSoundUrl(uniqueId);
+//       _soundUrlCompleter.complete(soundUrl);
+//     }
+//     final soundUrl = await _soundUrl;
+//     if (soundUrl == null) {
+//       return StreamAudioResponse(
+//           sourceLength: null,
+//           contentLength: null,
+//           offset: null,
+//           stream: const Stream.empty(),
+//           contentType: '');
+//     }
+//     final request = await httpClient.getUrl(soundUrl);
+//     for (var entry in headers?.entries ?? <MapEntry<String, String>>[]) {
+//       request.headers.set(entry.key, entry.value);
+//     }
+//     if (_player?._userAgent != null) {
+//       request.headers.set(HttpHeaders.userAgentHeader, _player!._userAgent!);
+//     }
+//     if (start != null || end != null) {
+//       request.headers
+//           .set(HttpHeaders.rangeHeader, 'bytes=${start ?? ""}-${end ?? ""}');
+//     }
+//     final response = await request.close();
+//     final acceptRangesHeader =
+//     response.headers.value(HttpHeaders.acceptRangesHeader);
+//     final contentRange = response.headers.value(HttpHeaders.contentRangeHeader);
+//     int? offset;
+//     if (contentRange != null) {
+//       int offsetEnd = contentRange.indexOf('-');
+//       if (offsetEnd >= 6) {
+//         offset = int.tryParse(contentRange.substring(6, offsetEnd));
+//       }
+//     }
+//     final contentLength =
+//     response.headers.value(HttpHeaders.contentLengthHeader);
+//     return StreamAudioResponse(
+//         rangeRequestsSupported:
+//         acceptRangesHeader != null && acceptRangesHeader != 'none',
+//         sourceLength: null,
+//         contentLength:
+//         contentLength == null ? null : int.tryParse(contentLength),
+//         offset: offset,
+//         stream: response.asBroadcastStream(),
+//         contentType: 'audio/mpeg',);
+//   }
+//
+//   @override
+//   AudioSourceMessage _toMessage() {
+//     return ProgressiveAudioSourceMessage(
+//         id: _id, uri: _uri.toString(), headers: headers, tag: tag);
+//   }
+// }
 
 class InfiniteSilenceAudioSource extends StreamAudioSource {
   final List<int> soundBytes;
