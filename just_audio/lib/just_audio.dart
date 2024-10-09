@@ -3517,7 +3517,6 @@ _ProxyHandler _proxyHandlerForSource(StreamAudioSource source) {
 
     await request.response.close();
   }
-
   return handler;
 }
 
@@ -3641,7 +3640,6 @@ _ProxyHandler _proxyHandlerForUri(
       }
     }
   }
-
   return handler;
 }
 
@@ -3651,13 +3649,7 @@ _ProxyHandler _proxyHandlerForYtSource(
       String? userAgent,
     }) {
   Uri? redirectedUri;
-  // Keep redirected [Uri] to speed-up requests
   Future<void> handler(_ProxyHttpServer server, HttpRequest request) async {
-
-    Stopwatch? stopwatch;
-    if(kDebugMode) {
-      stopwatch = Stopwatch()..start();
-    }
     final client = _createHttpClient(userAgent: userAgent);
     Uri uri = await source.resolveUri();
     // Try to make normal request
@@ -3666,7 +3658,6 @@ _ProxyHandler _proxyHandlerForYtSource(
       final requestHeaders = <String, String>{};
       request.headers
           .forEach((name, value) => requestHeaders[name] = value.join(', '));
-      // write supplied headers last (to ensure supplied headers aren't overwritten)
       headers?.forEach((name, value) => requestHeaders[name] = value);
       final originRequest =
       await _getUrl(client, redirectedUri??uri, headers: requestHeaders);
@@ -3690,7 +3681,6 @@ _ProxyHandler _proxyHandlerForYtSource(
           ['application/x-mpegURL', 'application/vnd.apple.mpegurl']
               .contains(request.headers.value(HttpHeaders.contentTypeHeader))) {
         // If this is an m3u8 file with headers, prepare the nested URIs.
-        // TODO: Handle other playlist formats similarly?
         final m3u8 = await originResponse.transform(utf8.decoder).join();
         for (var line in const LineSplitter().convert(m3u8)) {
           line = line.replaceAllMapped(
@@ -3732,8 +3722,6 @@ _ProxyHandler _proxyHandlerForYtSource(
     } on HttpException {
       // We likely are dealing with a streaming protocol
       if (uri.scheme == 'http') {
-        // Try parsing HTTP 0.9 response
-        //request.response.headers.clear();
         final socket = await Socket.connect(uri.host, uri.port);
         final clientSocket =
         await request.response.detachSocket(writeHeaders: false);
@@ -3769,14 +3757,7 @@ _ProxyHandler _proxyHandlerForYtSource(
         await done.future;
       }
     }
-
-    if(kDebugMode) {
-      print('loading proxy time ${stopwatch?.elapsedMilliseconds}');
-      stopwatch?.stop();
-    }
   }
-
-
   return handler;
 }
 
