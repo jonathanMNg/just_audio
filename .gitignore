@@ -18,3 +18,4 @@ pubspec.lock
 Podfile.lock
 
 **/.cxx/
+/just_audio/darwin/just_audio/.index-build
