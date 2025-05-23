@@ -3284,7 +3284,6 @@ class LoopingAudioSource extends AudioSource {
 class ResolvingYtAudioSource extends StreamYtAudioSource {
   final String uniqueId;
   final ResolveSoundUrl resolveSoundUrl;
-  Uri? _proxy_uri;
 
   ResolvingYtAudioSource(
       {required this.uniqueId, required this.resolveSoundUrl, dynamic tag})
@@ -3292,10 +3291,11 @@ class ResolvingYtAudioSource extends StreamYtAudioSource {
 
   @override
   Future<Uri> resolveUri() async {
-    if (_proxy_uri != null) return _proxy_uri!;
-
-    _proxy_uri = await resolveSoundUrl(uniqueId);
-    return _proxy_uri!;
+    final soundUrl = await resolveSoundUrl(uniqueId);
+    if (soundUrl == null) {
+      return Uri.parse("https://kttlowcost.b-cdn.net/sample/silence_3.mp3");
+    }
+    return soundUrl;
   }
 
   @override
