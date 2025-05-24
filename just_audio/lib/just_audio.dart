@@ -4078,15 +4078,8 @@ _ProxyHandler _proxyHandlerForYtSource(
       // write supplied headers last (to ensure supplied headers aren't overwritten)
       headers?.forEach((name, value) => requestHeaders[name] = value);
       HttpClientRequest? originRequest;
-      while (true) {
-        try {
-          originRequest ??= await _getUrl(client, redirectedUri ?? uri,
-              headers: requestHeaders);
-          break;
-        } on SocketException {
-          await Future<void>.delayed(const Duration(seconds: 1));
-        }
-      }
+      originRequest ??= await _getUrl(client, redirectedUri ?? uri,
+          headers: requestHeaders);
       host = originRequest.headers.value(HttpHeaders.hostHeader);
       final originResponse = await originRequest.close();
       if (originResponse.redirects.isNotEmpty) {
@@ -4115,18 +4108,7 @@ _ProxyHandler _proxyHandlerForYtSource(
           line = line.replaceAll(RegExp(r'#.*$'), '').trim();
           if (line.isEmpty) continue;
           try {
-            final rawNestedUri = Uri.parse(line);
-            if (rawNestedUri.hasScheme) {
-              // Don't propagate headers
-              server.addUriAudioSource(AudioSource.uri(rawNestedUri));
-            } else {
-              // This is a resource on the same server, so propagate the headers.
-              final basePath = rawNestedUri.path.startsWith('/')
-                  ? ''
-                  : uri.path.replaceAll(RegExp(r'/[^/]*$'), '/');
-              server.addStreamYtAudioSource(
-                  source);
-            }
+            server.addStreamYtAudioSource(source);
           } catch (e) {
             // ignore malformed lines
           }
@@ -4144,45 +4126,8 @@ _ProxyHandler _proxyHandlerForYtSource(
       }
       await request.response.flush();
       await request.response.close();
-    } on HttpException {
-      // We likely are dealing with a streaming protocol
-      if (uri?.scheme == 'http') {
-        // Try parsing HTTP 0.9 response
-        //request.response.headers.clear();
-        final socket = await Socket.connect(uri!.host, uri.port);
-        final clientSocket =
-            await request.response.detachSocket(writeHeaders: false);
-        final done = Completer<dynamic>();
-        socket.listen(
-          clientSocket.add,
-          onDone: () async {
-            await clientSocket.flush();
-            socket.close();
-            clientSocket.close();
-            done.complete();
-          },
-        );
-        // Rewrite headers
-        final headers = <String, String?>{};
-        request.headers.forEach((name, value) {
-          if (name.toLowerCase() != HttpHeaders.hostHeader) {
-            headers[name] = value.join(",");
-          }
-        });
-        for (var name in headers.keys) {
-          headers[name] = headers[name];
-        }
-        socket.write("GET ${uri.path} HTTP/1.1\n");
-        if (host != null) {
-          socket.write("Host: $host\n");
-        }
-        for (var name in headers.keys) {
-          socket.write("$name: ${headers[name]}\n");
-        }
-        socket.write("\n");
-        await socket.flush();
-        await done.future;
-      }
+    } catch (e) {
+      rethrow;
     }
   }
 
