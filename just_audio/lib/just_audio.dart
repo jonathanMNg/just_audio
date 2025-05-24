@@ -3285,39 +3285,14 @@ class ResolvingYtAudioSource extends StreamYtAudioSource {
   final String uniqueId;
   final ResolveSoundUrl resolveSoundUrl;
 
-  var _hasRequestedSoundUrl = false;
-  final _soundUrlCompleter = Completer<Uri?>();
-
-  Future<Uri?> get _soundUrl => _soundUrlCompleter.future;
-
   ResolvingYtAudioSource(
       {required this.uniqueId, required this.resolveSoundUrl, dynamic tag})
       : super(tag: tag);
 
   @override
-  Future<Uri> resolveUri() async {
-    // final soundUrl = await resolveSoundUrl(uniqueId);
-    // if (soundUrl == null) {
-    //   return Uri.parse("https://kttlowcost.b-cdn.net/sample/silence_3.mp3");
-    // }
-    // return soundUrl;
-
-    try {
-      if (!_hasRequestedSoundUrl) {
-        final soundUrl = await resolveSoundUrl(uniqueId);
-        _soundUrlCompleter.complete(soundUrl);
-        _hasRequestedSoundUrl = true;
-      }
-      final soundUrl = await _soundUrl;
-      if(soundUrl == null) {
-        _hasRequestedSoundUrl = false;
-      }
-      return soundUrl ?? Uri.parse("https://kttlowcost.b-cdn.net/sample/silence_3.mp3");
-    }
-    catch (e) {
-      // return Uri.parse("https://kttlowcost.b-cdn.net/sample/silence_3.mp3");
-    }
-    return Uri.parse("https://kttlowcost.b-cdn.net/sample/silence_3.mp3");
+  Future<Uri?> resolveUri() async {
+    final soundUrl = await resolveSoundUrl(uniqueId);
+    return soundUrl;
   }
 
   @override
@@ -3416,7 +3391,7 @@ abstract class StreamYtAudioSource extends IndexedAudioSource {
     }
   }
 
-  Future<Uri> resolveUri();
+  Future<Uri?> resolveUri();
   @override
   AudioSourceMessage _toMessage() => ProgressiveAudioSourceMessage(
       id: _id, uri: _uri.toString(), headers: null, tag: tag);
@@ -4062,73 +4037,51 @@ _ProxyHandler _proxyHandlerForYtSource(
   Map<String, String>? headers,
   String? userAgent,
 }) {
-  Uri? redirectedUri;
   Future<void> handler(_ProxyHttpServer server, HttpRequest request) async {
     final client = _createHttpClient(userAgent: userAgent);
 
     Uri? uri;
     // Try to make normal request
-
-    String? host;
-    try {
-      uri = await source.resolveUri();
-      final requestHeaders = <String, String>{};
-      request.headers
-          .forEach((name, value) => requestHeaders[name] = value.join(', '));
-      // write supplied headers last (to ensure supplied headers aren't overwritten)
-      headers?.forEach((name, value) => requestHeaders[name] = value);
-      HttpClientRequest? originRequest;
-      originRequest ??= await _getUrl(client, redirectedUri ?? uri,
-          headers: requestHeaders);
-      host = originRequest.headers.value(HttpHeaders.hostHeader);
-      final originResponse = await originRequest.close();
-      if (originResponse.redirects.isNotEmpty) {
-        redirectedUri = originResponse.redirects.last.location;
+    // int retry = 0;
+    uri = await source.resolveUri();
+    uri ??= Uri.parse('https://kttlowcost.b-cdn.net/sample/silence_3.mp3');
+    final requestHeaders = <String, String>{};
+    request.headers
+        .forEach((name, value) => requestHeaders[name] = value.join(', '));
+    // write supplied headers last (to ensure supplied headers aren't overwritten)
+    headers?.forEach((name, value) => requestHeaders[name] = value);
+    HttpClientRequest? originRequest;
+    while(true) {
+      try {
+        originRequest =
+        await _getUrl(client, uri, headers: requestHeaders);
+        break;
       }
-
-      request.response.headers.clear();
-      originResponse.headers.forEach((name, value) {
-        final filteredValue = value
-            .map((e) => e.replaceAll(RegExp(r'[^\x09\x20-\x7F]'), '?'))
-            .toList();
-        request.response.headers.set(name, filteredValue);
-      });
-      request.response.statusCode = originResponse.statusCode;
-
-      // Send response
-      if (headers != null && request.uri.path.toLowerCase().endsWith('.m3u8') ||
-          ['application/x-mpegURL', 'application/vnd.apple.mpegurl']
-              .contains(request.headers.value(HttpHeaders.contentTypeHeader))) {
-        // If this is an m3u8 file with headers, prepare the nested URIs.
-        // TODO: Handle other playlist formats similarly?
-        final m3u8 = await originResponse.transform(utf8.decoder).join();
-        for (var line in const LineSplitter().convert(m3u8)) {
-          line = line.replaceAllMapped(
-              RegExp(r'#EXT-X-MEDIA:.*?URI="(.*?)".*'), (m) => m[1]!);
-          line = line.replaceAll(RegExp(r'#.*$'), '').trim();
-          if (line.isEmpty) continue;
-          try {
-            server.addStreamYtAudioSource(source);
-          } catch (e) {
-            // ignore malformed lines
-          }
-        }
-        request.response.add(utf8.encode(m3u8));
-      } else {
-        request.response.bufferOutput = false;
-        var done = false;
-        request.response.done.then((dynamic _) => done = true);
-        await for (var chunk in originResponse) {
-          if (done) break;
-          request.response.add(chunk);
-          await request.response.flush();
-        }
+      on SocketException {
+        await Future<void>.delayed(const Duration(seconds: 1));
       }
-      await request.response.flush();
-      await request.response.close();
-    } catch (e) {
-      rethrow;
     }
+    final originResponse = await originRequest.close();
+    request.response.headers.clear();
+    originResponse.headers.forEach((name, value) {
+      final filteredValue = value
+          .map((e) => e.replaceAll(RegExp(r'[^\x09\x20-\x7F]'), '?'))
+          .toList();
+      request.response.headers.set(name, filteredValue);
+    });
+    request.response.statusCode = originResponse.statusCode;
+
+    // Send response
+    request.response.bufferOutput = false;
+    var done = false;
+    request.response.done.then((dynamic _) => done = true);
+    await for (var chunk in originResponse) {
+      if (done) break;
+      request.response.add(chunk);
+      await request.response.flush();
+    }
+    await request.response.flush();
+    await request.response.close();
   }
 
   return handler;
@@ -4792,6 +4745,7 @@ enum PositionDiscontinuityReason {
 
 Future<HttpClientRequest> _getUrl(HttpClient client, Uri uri,
     {Map<String, String>? headers}) async {
+  print('trying: ${uri.toString()}');
   final request = await client.getUrl(uri);
   if (headers != null) {
     final host = request.headers.value(HttpHeaders.hostHeader);
@@ -4806,7 +4760,12 @@ Future<HttpClientRequest> _getUrl(HttpClient client, Uri uri,
     }
   }
   // Match ExoPlayer's native behavior
-  request.maxRedirects = 20;
+  if(Platform.isAndroid) {
+    request.maxRedirects = 20;
+  }
+  else {
+    request.maxRedirects = 3;
+  }
   return request;
 }
 
