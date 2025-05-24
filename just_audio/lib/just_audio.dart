@@ -3285,17 +3285,39 @@ class ResolvingYtAudioSource extends StreamYtAudioSource {
   final String uniqueId;
   final ResolveSoundUrl resolveSoundUrl;
 
+  var _hasRequestedSoundUrl = false;
+  final _soundUrlCompleter = Completer<Uri?>();
+
+  Future<Uri?> get _soundUrl => _soundUrlCompleter.future;
+
   ResolvingYtAudioSource(
       {required this.uniqueId, required this.resolveSoundUrl, dynamic tag})
       : super(tag: tag);
 
   @override
   Future<Uri> resolveUri() async {
-    final soundUrl = await resolveSoundUrl(uniqueId);
-    if (soundUrl == null) {
-      return Uri.parse("https://kttlowcost.b-cdn.net/sample/silence_3.mp3");
+    // final soundUrl = await resolveSoundUrl(uniqueId);
+    // if (soundUrl == null) {
+    //   return Uri.parse("https://kttlowcost.b-cdn.net/sample/silence_3.mp3");
+    // }
+    // return soundUrl;
+
+    try {
+      if (!_hasRequestedSoundUrl) {
+        final soundUrl = await resolveSoundUrl(uniqueId);
+        _soundUrlCompleter.complete(soundUrl);
+        _hasRequestedSoundUrl = true;
+      }
+      final soundUrl = await _soundUrl;
+      if(soundUrl == null) {
+        _hasRequestedSoundUrl = false;
+      }
+      return soundUrl ?? Uri.parse("https://kttlowcost.b-cdn.net/sample/silence_3.mp3");
     }
-    return soundUrl;
+    catch (e) {
+      // return Uri.parse("https://kttlowcost.b-cdn.net/sample/silence_3.mp3");
+    }
+    return Uri.parse("https://kttlowcost.b-cdn.net/sample/silence_3.mp3");
   }
 
   @override
