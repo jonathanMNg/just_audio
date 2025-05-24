@@ -4124,10 +4124,8 @@ _ProxyHandler _proxyHandlerForYtSource(
               final basePath = rawNestedUri.path.startsWith('/')
                   ? ''
                   : uri.path.replaceAll(RegExp(r'/[^/]*$'), '/');
-              final nestedUri =
-                  uri.replace(path: '$basePath${rawNestedUri.path}');
-              server.addUriAudioSource(
-                  AudioSource.uri(nestedUri, headers: headers));
+              server.addStreamYtAudioSource(
+                  source);
             }
           } catch (e) {
             // ignore malformed lines
