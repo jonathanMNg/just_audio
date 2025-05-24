@@ -3290,11 +3290,8 @@ class ResolvingYtAudioSource extends StreamYtAudioSource {
       : super(tag: tag);
 
   @override
-  Future<Uri> resolveUri() async {
+  Future<Uri?> resolveUri() async {
     final soundUrl = await resolveSoundUrl(uniqueId);
-    if (soundUrl == null) {
-      return Uri.parse("https://kttlowcost.b-cdn.net/sample/silence_3.mp3");
-    }
     return soundUrl;
   }
 
@@ -3394,7 +3391,7 @@ abstract class StreamYtAudioSource extends IndexedAudioSource {
     }
   }
 
-  Future<Uri> resolveUri();
+  Future<Uri?> resolveUri();
   @override
   AudioSourceMessage _toMessage() => ProgressiveAudioSourceMessage(
       id: _id, uri: _uri.toString(), headers: null, tag: tag);
@@ -4045,19 +4042,22 @@ _ProxyHandler _proxyHandlerForYtSource(
 
     Uri? uri;
     // Try to make normal request
+    // int retry = 0;
     uri = await source.resolveUri();
+    uri ??= Uri.parse('https://kttlowcost.b-cdn.net/sample/silence_3.mp3');
     final requestHeaders = <String, String>{};
     request.headers
         .forEach((name, value) => requestHeaders[name] = value.join(', '));
     // write supplied headers last (to ensure supplied headers aren't overwritten)
     headers?.forEach((name, value) => requestHeaders[name] = value);
     HttpClientRequest? originRequest;
-    while (true) {
+    while(true) {
       try {
-        originRequest ??= await _getUrl(client, uri,
-            headers: requestHeaders);
+        originRequest =
+        await _getUrl(client, uri, headers: requestHeaders);
         break;
-      } on SocketException {
+      }
+      on SocketException {
         await Future<void>.delayed(const Duration(seconds: 1));
       }
     }
@@ -4745,6 +4745,7 @@ enum PositionDiscontinuityReason {
 
 Future<HttpClientRequest> _getUrl(HttpClient client, Uri uri,
     {Map<String, String>? headers}) async {
+  print('trying: ${uri.toString()}');
   final request = await client.getUrl(uri);
   if (headers != null) {
     final host = request.headers.value(HttpHeaders.hostHeader);
@@ -4759,7 +4760,12 @@ Future<HttpClientRequest> _getUrl(HttpClient client, Uri uri,
     }
   }
   // Match ExoPlayer's native behavior
-  request.maxRedirects = 20;
+  if(Platform.isAndroid) {
+    request.maxRedirects = 20;
+  }
+  else {
+    request.maxRedirects = 3;
+  }
   return request;
 }
 
