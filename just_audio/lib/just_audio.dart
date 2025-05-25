@@ -3847,6 +3847,28 @@ class _StreamingByteRangeRequest {
 typedef _ProxyHandler = void Function(
     _ProxyHttpServer server, HttpRequest request);
 
+// Base64 encoded 1-second silent MP3.
+const String _silentMp3Base64 = 'SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA/+M4wAAAAAAAAAAAAEluZm8AAAAPAAAAAwAAAbAAqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV////////////////////////////////////////////AAAAAExhdmM1OC4xMwAAAAAAAAAAAAAAACQDkAAAAAAAAAGw9wrNaQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/+MYxAAAAANIAAAAAExBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV/+MYxDsAAANIAAAAAFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV/+MYxHYAAANIAAAAAFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV';
+
+// Decoded silent MP3 data.
+final Uint8List _silentMp3Bytes = base64Decode(_silentMp3Base64);
+
+/// A proxy handler for serving a 1-second silent MP3.
+// _ProxyHandler _proxyHandlerForSilenceSource() { // Renamed handler
+//   Future<void> handler(_ProxyHttpServer server, HttpRequest request) async {
+//     request.response.headers.clear();
+//     request.response.headers.set(HttpHeaders.contentTypeHeader, 'audio/mpeg');
+//     request.response.headers.set(HttpHeaders.acceptRangesHeader, 'bytes');
+//     request.response.contentLength = _silentMp3Bytes.length;
+//     request.response.statusCode = HttpStatus.ok;
+//
+//     request.response.add(_silentMp3Bytes);
+//     await request.response.close();
+//   }
+//
+//   return handler;
+// }
+
 /// A proxy handler for serving audio from a [StreamAudioSource].
 _ProxyHandler _proxyHandlerForSource(StreamAudioSource source) {
   Future<void> handler(_ProxyHttpServer server, HttpRequest request) async {
@@ -4037,51 +4059,52 @@ _ProxyHandler _proxyHandlerForYtSource(
   Map<String, String>? headers,
   String? userAgent,
 }) {
+  // return _proxyHandlerForSilenceSource();
   Future<void> handler(_ProxyHttpServer server, HttpRequest request) async {
     final client = _createHttpClient(userAgent: userAgent);
-
-    Uri? uri;
-    // Try to make normal request
-    // int retry = 0;
-    uri = await source.resolveUri();
-    uri ??= Uri.parse('https://kttlowcost.b-cdn.net/sample/silence_3.mp3');
     final requestHeaders = <String, String>{};
-    request.headers
-        .forEach((name, value) => requestHeaders[name] = value.join(', '));
-    // write supplied headers last (to ensure supplied headers aren't overwritten)
-    headers?.forEach((name, value) => requestHeaders[name] = value);
-    HttpClientRequest? originRequest;
-    while(true) {
-      try {
-        originRequest =
-        await _getUrl(client, uri, headers: requestHeaders);
-        break;
-      }
-      on SocketException {
-        await Future<void>.delayed(const Duration(seconds: 1));
-      }
-    }
-    final originResponse = await originRequest.close();
-    request.response.headers.clear();
-    originResponse.headers.forEach((name, value) {
-      final filteredValue = value
-          .map((e) => e.replaceAll(RegExp(r'[^\x09\x20-\x7F]'), '?'))
-          .toList();
-      request.response.headers.set(name, filteredValue);
-    });
-    request.response.statusCode = originResponse.statusCode;
+    Uri? uri;
+    uri = await source.resolveUri();
+    if(uri == null) {
+      request.response.headers.clear();
+      request.response.headers.set(HttpHeaders.contentTypeHeader, 'audio/mpeg');
+      request.response.headers.set(HttpHeaders.acceptRangesHeader, 'bytes');
+      request.response.contentLength = _silentMp3Bytes.length;
+      request.response.statusCode = HttpStatus.ok;
 
-    // Send response
-    request.response.bufferOutput = false;
-    var done = false;
-    request.response.done.then((dynamic _) => done = true);
-    await for (var chunk in originResponse) {
-      if (done) break;
-      request.response.add(chunk);
-      await request.response.flush();
+      request.response.add(_silentMp3Bytes);
+      await request.response.close();
     }
-    await request.response.flush();
-    await request.response.close();
+    else {
+      request.headers
+          .forEach((name, value) => requestHeaders[name] = value.join(', '));
+      // write supplied headers last (to ensure supplied headers aren't overwritten)
+      headers?.forEach((name, value) => requestHeaders[name] = value);
+      HttpClientRequest? originRequest;
+      originRequest =
+      await _getUrl(client, uri!, headers: requestHeaders);
+      final originResponse = await originRequest.close();
+      request.response.headers.clear();
+      originResponse.headers.forEach((name, value) {
+        final filteredValue = value
+            .map((e) => e.replaceAll(RegExp(r'[^\x09\x20-\x7F]'), '?'))
+            .toList();
+        request.response.headers.set(name, filteredValue);
+      });
+      request.response.statusCode = originResponse.statusCode;
+
+      // Send response
+      request.response.bufferOutput = false;
+      var done = false;
+      request.response.done.then((dynamic _) => done = true);
+      await for (var chunk in originResponse) {
+        if (done) break;
+        request.response.add(chunk);
+        await request.response.flush();
+      }
+      await request.response.flush();
+      await request.response.close();
+    }
   }
 
   return handler;
