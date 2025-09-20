@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
+import 'dart:math' as math;
 
 import 'package:audio_session/audio_session.dart';
 import 'package:crypto/crypto.dart';
@@ -332,15 +332,20 @@ class AudioPlayer {
     _currentIndexSubject.addStream(
         sequenceStateStream.map((sequenceState) => sequenceState.currentIndex));
 
-    _hasNextSubject.addStream(
-      Rx.combineLatest3(currentIndexStream, loopModeStream, sequenceStream,
-              (currentIndex, loopMode, sequence) => currentIndex != null && currentIndex < sequence.length - 1 || loopMode != LoopMode.off)
-    );
+    _hasNextSubject.addStream(Rx.combineLatest3(
+        currentIndexStream,
+        loopModeStream,
+        sequenceStream,
+        (currentIndex, loopMode, sequence) =>
+            currentIndex != null && currentIndex < sequence.length - 1 ||
+            loopMode != LoopMode.off));
 
-    _hasPreviousSubject.addStream(
-      Rx.combineLatest2(currentIndexStream, loopModeStream,
-              (currentIndex, loopMode) => currentIndex != null && currentIndex > 0 || loopMode != LoopMode.off)
-    );
+    _hasPreviousSubject.addStream(Rx.combineLatest2(
+        currentIndexStream,
+        loopModeStream,
+        (currentIndex, loopMode) =>
+            currentIndex != null && currentIndex > 0 ||
+            loopMode != LoopMode.off));
 
     _sequenceSubject.addStream(
         sequenceStateStream.map((sequenceState) => sequenceState.sequence));
@@ -414,7 +419,7 @@ class AudioPlayer {
             switch (event.type) {
               case AudioInterruptionType.duck:
                 assert(_isAndroid());
-                setVolume(min(1.0, volume * 2));
+                setVolume(math.min(1.0, volume * 2));
                 _playInterrupted = false;
                 break;
               case AudioInterruptionType.pause:
@@ -2180,8 +2185,9 @@ class SequenceState {
   final List<IndexedAudioSource> sequence;
 
   /// The index of the current source in the sequence.
-  int? get currentIndex =>
-      sequence.isNotEmpty ? min(_currentIndex ?? 0, sequence.length - 1) : null;
+  int? get currentIndex => sequence.isNotEmpty
+      ? math.min(_currentIndex ?? 0, sequence.length - 1)
+      : null;
 
   // The index of the current source in the sequence.
   final int? _currentIndex;
@@ -3339,28 +3345,209 @@ class LoopingAudioSource extends AudioSource {
       id: _id, child: child._toMessage(), count: count);
 }
 
-class ResolvingYtAudioSource extends StreamYtAudioSource {
+class ResolvingYtAudioSource extends StreamAudioSource {
   final String uniqueId;
   final ResolveSoundUrl resolveSoundUrl;
+  final Map<String, String>? headers;
+
+  ResolvedAudioMetadata? _resolvedMetadata;
+  HttpClient? _httpClient;
+  StreamController<List<int>>? _streamController;
+  bool _isDownloading = false;
+  final List<int> _buffer = [];
+  int _downloadedBytes = 0;
 
   ResolvingYtAudioSource(
-      {required this.uniqueId, required this.resolveSoundUrl, dynamic tag})
+      {required this.uniqueId,
+      required this.resolveSoundUrl,
+      this.headers,
+      dynamic tag})
       : super(tag: tag);
 
   @override
-  Future<Uri?> resolveUri() async {
-    final soundUrl = await resolveSoundUrl(uniqueId);
-    return soundUrl;
+  Future<StreamAudioResponse> request([int? start, int? end]) async {
+    // Resolve the metadata if not already resolved
+    if (_resolvedMetadata == null) {
+      _resolvedMetadata = await resolveSoundUrl(uniqueId);
+      if (_resolvedMetadata == null) {
+        throw Exception('Failed to resolve audio URL for ID: $uniqueId');
+      }
+    }
+
+    // If this is a range request and we have the data, serve from buffer
+    if (start != null && _buffer.length > start) {
+      final endByte = end ?? _buffer.length;
+      final requestedData =
+          _buffer.sublist(start, math.min(endByte, _buffer.length));
+
+      return StreamAudioResponse(
+        rangeRequestsSupported: true,
+        sourceLength: _resolvedMetadata!.expectedContentLength,
+        contentLength: requestedData.length,
+        offset: start,
+        stream: Stream.value(requestedData),
+        contentType: _resolvedMetadata!.contentType,
+      );
+    }
+
+    // Start progressive download if not already downloading
+    if (!_isDownloading) {
+      _startProgressiveDownload();
+    }
+
+    // Create a stream that yields data as it becomes available
+    final controller = StreamController<List<int>>();
+
+    // If we have buffered data, send it first
+    if (_buffer.isNotEmpty) {
+      final startByte = start ?? 0;
+      if (_buffer.length > startByte) {
+        final endByte = end ?? _buffer.length;
+        final availableData =
+            _buffer.sublist(startByte, math.min(endByte, _buffer.length));
+        controller.add(availableData);
+      }
+    }
+
+    // Set up listener for new chunks
+    late StreamSubscription<List<int>> subscription;
+    subscription = _getProgressiveStream(start, end).listen(
+      (chunk) => controller.add(chunk),
+      onError: (Object error) => controller.addError(error),
+      onDone: () {
+        subscription.cancel();
+        controller.close();
+      },
+    );
+
+    return StreamAudioResponse(
+      rangeRequestsSupported: true,
+      sourceLength: _resolvedMetadata!.expectedContentLength,
+      contentLength:
+          _resolvedMetadata!.expectedContentLength != null && start != null
+              ? (end ?? _resolvedMetadata!.expectedContentLength!) - start
+              : null,
+      offset: start,
+      stream: controller.stream,
+      contentType: _resolvedMetadata!.contentType,
+    );
   }
 
-  @override
-  AudioSourceMessage _toMessage() {
-    return ProgressiveAudioSourceMessage(
-        id: _id, uri: _uri.toString(), tag: tag);
+  Stream<List<int>> _getProgressiveStream(int? start, int? end) async* {
+    final startByte = start ?? 0;
+
+    while (_isDownloading || _downloadedBytes > startByte) {
+      // Wait for more data to be available
+      if (_downloadedBytes <= startByte) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        continue;
+      }
+
+      // Calculate what new data we can yield
+      final availableEnd = _downloadedBytes;
+      final requestEnd = end ?? availableEnd;
+      final yieldEnd = math.min(requestEnd, availableEnd);
+
+      if (yieldEnd > startByte && _buffer.length > startByte) {
+        final chunk =
+            _buffer.sublist(startByte, math.min(yieldEnd, _buffer.length));
+        if (chunk.isNotEmpty) {
+          yield chunk;
+          break; // For now, yield once and let the player request more
+        }
+      }
+
+      // If we've sent all requested data, break
+      if (end != null && _downloadedBytes >= end) {
+        break;
+      }
+
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+  }
+
+  Future<void> _startProgressiveDownload() async {
+    if (_isDownloading || _resolvedMetadata == null) return;
+
+    _isDownloading = true;
+    _httpClient = HttpClient();
+
+    try {
+      final request = await _httpClient!.getUrl(_resolvedMetadata!.uri);
+
+      // Add headers if provided
+      if (headers != null) {
+        headers!.forEach((key, value) {
+          request.headers.add(key, value);
+        });
+      }
+
+      final response = await request.close();
+
+      if (response.statusCode != 200) {
+        throw Exception(
+            'HTTP ${response.statusCode}: Failed to download audio');
+      }
+
+      // Update content length if we didn't have it
+      final contentLength = response.contentLength;
+      if (contentLength > 0 &&
+          _resolvedMetadata!.expectedContentLength == null) {
+        // We could expose this through a callback if needed
+      }
+
+      await for (final chunk in response) {
+        _buffer.addAll(chunk);
+        _downloadedBytes += chunk.length;
+
+        // Optional: Limit buffer size to prevent memory issues
+        // Could make this configurable
+        if (_buffer.length > 10 * 1024 * 1024) {
+          // 10MB limit
+          // Remove old data from the beginning of buffer
+          final removeCount = _buffer.length - 8 * 1024 * 1024; // Keep 8MB
+          _buffer.removeRange(0, removeCount);
+        }
+      }
+    } catch (e) {
+      _isDownloading = false;
+      rethrow;
+    } finally {
+      _isDownloading = false;
+      _httpClient?.close();
+    }
+  }
+
+  void _dispose() {
+    _streamController?.close();
+    _httpClient?.close();
   }
 }
 
-typedef ResolveSoundUrl = Future<Uri?> Function(String uniqueId);
+/// Metadata for resolved audio source containing all necessary information for streaming
+class ResolvedAudioMetadata {
+  /// The URI of the audio source
+  final Uri uri;
+
+  /// The expected content length in bytes, if known
+  final int? expectedContentLength;
+
+  /// The MIME type of the audio content
+  final String contentType;
+
+  /// The chunk size for progressive downloading
+  final int chunkSize;
+
+  const ResolvedAudioMetadata({
+    required this.uri,
+    this.expectedContentLength,
+    this.contentType = 'audio/mpeg',
+    this.chunkSize = 8192, // 8KB default
+  });
+}
+
+typedef ResolveSoundUrl = Future<ResolvedAudioMetadata?> Function(
+    String uniqueId);
 
 class InfiniteSilenceAudioSource extends StreamAudioSource {
   final List<int> soundBytes;
@@ -3692,8 +3879,8 @@ class LockCachingAudioSource extends StreamAudioSource {
         final end = cacheResponse.end;
         if (end != null && _progress >= end) {
           // We've received enough data to fulfill the byte range request.
-          final subEnd =
-              min(data.length, max(0, data.length - (_progress - end)));
+          final subEnd = math.min(
+              data.length, math.max(0, data.length - (_progress - end)));
           cacheResponse.controller.add(data.sublist(0, subEnd));
           cacheResponse.controller.close();
         } else {
@@ -3906,7 +4093,8 @@ typedef _ProxyHandler = void Function(
     _ProxyHttpServer server, HttpRequest request);
 
 // Base64 encoded 1-second silent MP3.
-const String _silentMp3Base64 = 'SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA/+M4wAAAAAAAAAAAAEluZm8AAAAPAAAAAwAAAbAAqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV////////////////////////////////////////////AAAAAExhdmM1OC4xMwAAAAAAAAAAAAAAACQDkAAAAAAAAAGw9wrNaQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/+MYxAAAAANIAAAAAExBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV/+MYxDsAAANIAAAAAFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV/+MYxHYAAANIAAAAAFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV';
+const String _silentMp3Base64 =
+    'SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA/+M4wAAAAAAAAAAAAEluZm8AAAAPAAAAAwAAAbAAqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV////////////////////////////////////////////AAAAAExhdmM1OC4xMwAAAAAAAAAAAAAAACQDkAAAAAAAAAGw9wrNaQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/+MYxAAAAANIAAAAAExBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV/+MYxDsAAANIAAAAAFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV/+MYxHYAAANIAAAAAFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV';
 
 // Decoded silent MP3 data.
 final Uint8List _silentMp3Bytes = base64Decode(_silentMp3Base64);
@@ -4123,7 +4311,7 @@ _ProxyHandler _proxyHandlerForYtSource(
     final requestHeaders = <String, String>{};
     Uri? uri;
     uri = await source.resolveUri();
-    if(uri == null) {
+    if (uri == null) {
       request.response.headers.clear();
       request.response.headers.set(HttpHeaders.contentTypeHeader, 'audio/mpeg');
       request.response.headers.set(HttpHeaders.acceptRangesHeader, 'bytes');
@@ -4132,15 +4320,13 @@ _ProxyHandler _proxyHandlerForYtSource(
 
       request.response.add(_silentMp3Bytes);
       await request.response.close();
-    }
-    else {
+    } else {
       request.headers
           .forEach((name, value) => requestHeaders[name] = value.join(', '));
       // write supplied headers last (to ensure supplied headers aren't overwritten)
       headers?.forEach((name, value) => requestHeaders[name] = value);
       HttpClientRequest? originRequest;
-      originRequest =
-      await _getUrl(client, uri!, headers: requestHeaders);
+      originRequest = await _getUrl(client, uri!, headers: requestHeaders);
       final originResponse = await originRequest.close();
       request.response.headers.clear();
       originResponse.headers.forEach((name, value) {
@@ -4196,11 +4382,12 @@ abstract class ShuffleOrder {
 /// The default implementation of [ShuffleOrder] which shuffles items with the
 /// currently playing item at the head of the order.
 class DefaultShuffleOrder extends ShuffleOrder {
-  final Random _random;
+  final math.Random _random;
   @override
   final indices = <int>[];
 
-  DefaultShuffleOrder({Random? random}) : _random = random ?? Random();
+  DefaultShuffleOrder({math.Random? random})
+      : _random = random ?? math.Random();
 
   @override
   void shuffle({int? initialIndex}) {
@@ -4445,8 +4632,10 @@ class _IdleAudioPlayer extends AudioPlayerPlatform {
       ConcatenatingRemoveRangeRequest request) async {
     if (request.id == '' && _index != null) {
       if (request.startIndex <= _index!) {
-        _index = min(request.shuffleOrder.length - 1,
-            _index! - (min(_index!, request.endIndex) - request.startIndex));
+        _index = math.min(
+            request.shuffleOrder.length - 1,
+            _index! -
+                (math.min(_index!, request.endIndex) - request.startIndex));
         if (_index! < 0) _index = null;
         _broadcastPlaybackEvent();
       }
@@ -4841,10 +5030,9 @@ Future<HttpClientRequest> _getUrl(HttpClient client, Uri uri,
     }
   }
   // Match ExoPlayer's native behavior
-  if(Platform.isAndroid) {
+  if (Platform.isAndroid) {
     request.maxRedirects = 20;
-  }
-  else {
+  } else {
     request.maxRedirects = 3;
   }
   return request;
