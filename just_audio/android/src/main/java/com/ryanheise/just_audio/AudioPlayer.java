@@ -635,9 +635,15 @@ public class AudioPlayer implements MethodCallHandler, Player.Listener, Metadata
         String id = (String)map.get("id");
         switch ((String)map.get("type")) {
         case "progressive":
+            String uri = (String)map.get("uri");
+            // Check if this is a WebM URL by extension
+            boolean isWebM = uri != null && (uri.toLowerCase().endsWith(".webm") || 
+                                           uri.toLowerCase().contains(".webm?") ||
+                                           uri.toLowerCase().contains("webm"));
+            
             return new ProgressiveMediaSource.Factory(buildDataSourceFactory(mapGet(map, "headers")), buildExtractorsFactory(mapGet(map, "options")))
                     .createMediaSource(new MediaItem.Builder()
-                            .setUri(Uri.parse((String)map.get("uri")))
+                            .setUri(Uri.parse(uri))
                             .setTag(id)
                             .build());
         case "dash":
@@ -652,12 +658,6 @@ public class AudioPlayer implements MethodCallHandler, Player.Listener, Metadata
                     .createMediaSource(new MediaItem.Builder()
                             .setUri(Uri.parse((String)map.get("uri")))
                             .setMimeType(MimeTypes.APPLICATION_M3U8)
-                            .build());
-        case "webm":
-            return new ProgressiveMediaSource.Factory(buildDataSourceFactory(mapGet(map, "headers")), buildExtractorsFactory(mapGet(map, "options")))
-                    .createMediaSource(new MediaItem.Builder()
-                            .setUri(Uri.parse((String)map.get("uri")))
-                            .setTag(id)
                             .build());
         case "silence":
             return new SilenceMediaSource.Factory()

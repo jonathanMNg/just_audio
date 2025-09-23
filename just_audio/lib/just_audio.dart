@@ -2968,11 +2968,12 @@ class WebMUrlAudioSource extends UriAudioSource {
       : super(uri, headers: headers, tag: tag, duration: duration);
 
   @override
-  AudioSourceMessage _toMessage() => WebMUrlAudioSourceMessage(
+  AudioSourceMessage _toMessage() => ProgressiveAudioSourceMessage(
         id: _id,
         uri: _effectiveUri.toString(),
         headers: _mergedHeaders,
         tag: tag,
+        options: null,
       );
 }
 
@@ -4178,7 +4179,7 @@ _ProxyHandler _proxyHandlerForYtSource(
       // write supplied headers last (to ensure supplied headers aren't overwritten)
       headers?.forEach((name, value) => requestHeaders[name] = value);
       HttpClientRequest? originRequest;
-      originRequest = await _getUrl(client, uri!, headers: requestHeaders);
+      originRequest = await _getUrl(client, uri, headers: requestHeaders);
       final originResponse = await originRequest.close();
       request.response.headers.clear();
       originResponse.headers.forEach((name, value) {

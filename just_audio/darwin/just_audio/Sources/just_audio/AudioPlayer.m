@@ -481,13 +481,23 @@
 - (AudioSource *)decodeAudioSource:(NSDictionary *)data {
     NSString *type = data[@"type"];
     if ([@"progressive" isEqualToString:type]) {
-        return [[UriAudioSource alloc] initWithId:data[@"id"] uri:data[@"uri"] loadControl:_loadControl headers:data[@"headers"] options:data[@"options"]];
+        NSString *uri = data[@"uri"];
+        // Check if this is a WebM URL by extension
+        BOOL isWebM = uri && ([uri.lowercaseString hasSuffix:@".webm"] || 
+                             [uri.lowercaseString containsString:@".webm?"] ||
+                             [uri.lowercaseString containsString:@"webm"]);
+        
+        if (isWebM) {
+            // Use VLC for WebM files
+            return [[WebMVlcAudioSource alloc] initWithId:data[@"id"] uri:uri headers:data[@"headers"] audioPlayer:self];
+        } else {
+            // Use regular AVPlayer for other progressive sources
+            return [[UriAudioSource alloc] initWithId:data[@"id"] uri:uri loadControl:_loadControl headers:data[@"headers"] options:data[@"options"]];
+        }
     } else if ([@"dash" isEqualToString:type]) {
         return [[UriAudioSource alloc] initWithId:data[@"id"] uri:data[@"uri"] loadControl:_loadControl headers:data[@"headers"] options:data[@"options"]];
     } else if ([@"hls" isEqualToString:type]) {
         return [[UriAudioSource alloc] initWithId:data[@"id"] uri:data[@"uri"] loadControl:_loadControl headers:data[@"headers"] options:data[@"options"]];
-    } else if ([@"webm" isEqualToString:type]) {
-        return [[WebMVlcAudioSource alloc] initWithId:data[@"id"] uri:data[@"uri"] headers:data[@"headers"] audioPlayer:self];
     } else if ([@"concatenating" isEqualToString:type]) {
         return [[ConcatenatingAudioSource alloc] initWithId:data[@"id"]
                                                audioSources:[self decodeAudioSources:data[@"children"]]
