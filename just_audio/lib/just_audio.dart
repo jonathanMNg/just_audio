@@ -3342,6 +3342,7 @@ class LoopingAudioSource extends AudioSource {
 class ResolvingYtAudioSource extends StreamYtAudioSource {
   final String uniqueId;
   final ResolveSoundUrl resolveSoundUrl;
+  Completer<Uri?>? _uriCompleter;
 
   ResolvingYtAudioSource(
       {required this.uniqueId, required this.resolveSoundUrl, dynamic tag})
@@ -3349,8 +3350,20 @@ class ResolvingYtAudioSource extends StreamYtAudioSource {
 
   @override
   Future<Uri?> resolveUri() async {
-    final soundUrl = await resolveSoundUrl(uniqueId);
-    return soundUrl;
+    if(_uriCompleter != null) {
+      return _uriCompleter!.future;
+    }
+    _uriCompleter = Completer<Uri?>();
+
+    try {
+      final uri = await resolveSoundUrl(uniqueId);
+      _uriCompleter!.complete(uri);
+      return uri;
+    } catch (error) {
+      _uriCompleter!.completeError(error);
+      _uriCompleter = null;
+      rethrow;
+    }
   }
 
   @override
@@ -3447,6 +3460,10 @@ abstract class StreamYtAudioSource extends IndexedAudioSource {
       await _player!._proxy.ensureRunning();
       _uri ??= _player!._proxy.addStreamYtAudioSource(this);
     }
+  }
+
+  UriAudioSource toUriAudioSource() {
+    return ProgressiveAudioSource(_uri!, tag: tag);
   }
 
   Future<Uri?> resolveUri();
@@ -4826,7 +4843,9 @@ enum PositionDiscontinuityReason {
 
 Future<HttpClientRequest> _getUrl(HttpClient client, Uri uri,
     {Map<String, String>? headers}) async {
-  print('trying: ${uri.toString()}');
+  if (kDebugMode) {
+    print('trying: ${uri.toString()}');
+  }
   final request = await client.getUrl(uri);
   if (headers != null) {
     final host = request.headers.value(HttpHeaders.hostHeader);
