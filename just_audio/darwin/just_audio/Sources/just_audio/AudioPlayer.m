@@ -1515,7 +1515,7 @@
             break;
     }
     
-    [self enqueuePlaybackEvent];
+    [self broadcastPlaybackEvent];
 }
 
 - (void)onVlcPlayerTimeChanged:(WebMVlcAudioSource *)vlcSource {
@@ -1523,7 +1523,7 @@
     
     // Update position from VLC
     [self updatePosition];
-    [self enqueuePlaybackEvent];
+    [self broadcastPlaybackEvent];
 }
 
 @end
