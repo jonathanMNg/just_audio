@@ -332,15 +332,20 @@ class AudioPlayer {
     _currentIndexSubject.addStream(
         sequenceStateStream.map((sequenceState) => sequenceState.currentIndex));
 
-    _hasNextSubject.addStream(
-      Rx.combineLatest3(currentIndexStream, loopModeStream, sequenceStream,
-              (currentIndex, loopMode, sequence) => currentIndex != null && currentIndex < sequence.length - 1 || loopMode != LoopMode.off)
-    );
+    _hasNextSubject.addStream(Rx.combineLatest3(
+        currentIndexStream,
+        loopModeStream,
+        sequenceStream,
+        (currentIndex, loopMode, sequence) =>
+            currentIndex != null && currentIndex < sequence.length - 1 ||
+            loopMode != LoopMode.off));
 
-    _hasPreviousSubject.addStream(
-      Rx.combineLatest2(currentIndexStream, loopModeStream,
-              (currentIndex, loopMode) => currentIndex != null && currentIndex > 0 || loopMode != LoopMode.off)
-    );
+    _hasPreviousSubject.addStream(Rx.combineLatest2(
+        currentIndexStream,
+        loopModeStream,
+        (currentIndex, loopMode) =>
+            currentIndex != null && currentIndex > 0 ||
+            loopMode != LoopMode.off));
 
     _sequenceSubject.addStream(
         sequenceStateStream.map((sequenceState) => sequenceState.sequence));
@@ -2937,6 +2942,40 @@ class HlsAudioSource extends UriAudioSource {
       );
 }
 
+/// An [AudioSource] representing a WebM audio stream. This audio source uses
+/// platform-specific players optimized for WebM format:
+///
+/// * iOS: Uses MobileVLCKit (libvlc) for WebM support since AVPlayer doesn't
+///   natively support WebM audio.
+/// * Android: Uses ExoPlayer which has native WebM support.
+/// * Web: Uses the browser's native WebM support.
+///
+/// The following URI schemes are supported:
+///
+/// * http(s): loads from an HTTP(S) resource.
+/// * file: loads from a local file (provided you give your app permission to
+/// access that file).
+/// * asset: loads from a Flutter asset (not supported on Web).
+///
+/// On platforms except for the web, the supplied [headers] will be passed with
+/// the HTTP(S) request.
+///
+/// If headers are set, just_audio will create a cleartext local HTTP proxy on
+/// your device to forward HTTP requests with headers included.
+class WebMUrlAudioSource extends UriAudioSource {
+  WebMUrlAudioSource(Uri uri,
+      {Map<String, String>? headers, dynamic tag, Duration? duration})
+      : super(uri, headers: headers, tag: tag, duration: duration);
+
+  @override
+  AudioSourceMessage _toMessage() => WebMUrlAudioSourceMessage(
+        id: _id,
+        uri: _effectiveUri.toString(),
+        headers: _mergedHeaders,
+        tag: tag,
+      );
+}
+
 /// An [AudioSource] for a period of silence.
 ///
 /// NOTE: This is currently supported on Android only.
@@ -3906,7 +3945,8 @@ typedef _ProxyHandler = void Function(
     _ProxyHttpServer server, HttpRequest request);
 
 // Base64 encoded 1-second silent MP3.
-const String _silentMp3Base64 = 'SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA/+M4wAAAAAAAAAAAAEluZm8AAAAPAAAAAwAAAbAAqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV////////////////////////////////////////////AAAAAExhdmM1OC4xMwAAAAAAAAAAAAAAACQDkAAAAAAAAAGw9wrNaQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/+MYxAAAAANIAAAAAExBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV/+MYxDsAAANIAAAAAFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV/+MYxHYAAANIAAAAAFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV';
+const String _silentMp3Base64 =
+    'SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA/+M4wAAAAAAAAAAAAEluZm8AAAAPAAAAAwAAAbAAqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV////////////////////////////////////////////AAAAAExhdmM1OC4xMwAAAAAAAAAAAAAAACQDkAAAAAAAAAGw9wrNaQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/+MYxAAAAANIAAAAAExBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV/+MYxDsAAANIAAAAAFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV/+MYxHYAAANIAAAAAFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV';
 
 // Decoded silent MP3 data.
 final Uint8List _silentMp3Bytes = base64Decode(_silentMp3Base64);
@@ -4123,7 +4163,7 @@ _ProxyHandler _proxyHandlerForYtSource(
     final requestHeaders = <String, String>{};
     Uri? uri;
     uri = await source.resolveUri();
-    if(uri == null) {
+    if (uri == null) {
       request.response.headers.clear();
       request.response.headers.set(HttpHeaders.contentTypeHeader, 'audio/mpeg');
       request.response.headers.set(HttpHeaders.acceptRangesHeader, 'bytes');
@@ -4132,15 +4172,13 @@ _ProxyHandler _proxyHandlerForYtSource(
 
       request.response.add(_silentMp3Bytes);
       await request.response.close();
-    }
-    else {
+    } else {
       request.headers
           .forEach((name, value) => requestHeaders[name] = value.join(', '));
       // write supplied headers last (to ensure supplied headers aren't overwritten)
       headers?.forEach((name, value) => requestHeaders[name] = value);
       HttpClientRequest? originRequest;
-      originRequest =
-      await _getUrl(client, uri!, headers: requestHeaders);
+      originRequest = await _getUrl(client, uri!, headers: requestHeaders);
       final originResponse = await originRequest.close();
       request.response.headers.clear();
       originResponse.headers.forEach((name, value) {
@@ -4841,10 +4879,9 @@ Future<HttpClientRequest> _getUrl(HttpClient client, Uri uri,
     }
   }
   // Match ExoPlayer's native behavior
-  if(Platform.isAndroid) {
+  if (Platform.isAndroid) {
     request.maxRedirects = 20;
-  }
-  else {
+  } else {
     request.maxRedirects = 3;
   }
   return request;

@@ -653,6 +653,12 @@ public class AudioPlayer implements MethodCallHandler, Player.Listener, Metadata
                             .setUri(Uri.parse((String)map.get("uri")))
                             .setMimeType(MimeTypes.APPLICATION_M3U8)
                             .build());
+        case "webm":
+            return new ProgressiveMediaSource.Factory(buildDataSourceFactory(mapGet(map, "headers")), buildExtractorsFactory(mapGet(map, "options")))
+                    .createMediaSource(new MediaItem.Builder()
+                            .setUri(Uri.parse((String)map.get("uri")))
+                            .setTag(id)
+                            .build());
         case "silence":
             return new SilenceMediaSource.Factory()
                     .setDurationUs(getLong(map.get("duration")))

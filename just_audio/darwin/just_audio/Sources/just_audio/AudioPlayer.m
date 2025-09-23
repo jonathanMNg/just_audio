@@ -7,6 +7,7 @@
 #import "./include/just_audio/ConcatenatingAudioSource.h"
 #import "./include/just_audio/LoopingAudioSource.h"
 #import "./include/just_audio/ClippingAudioSource.h"
+#import "./include/just_audio/WebMVlcAudioSource.h"
 #import <AVFoundation/AVFoundation.h>
 #import <stdlib.h>
 #include <TargetConditionals.h>
@@ -53,6 +54,10 @@
     NSDictionary<NSString *, NSObject *> *_icyMetadata;
     NSNumber *_errorCode;
     NSString *_errorMessage;
+    
+    // VLC-specific variables
+    WebMVlcAudioSource *_currentVlcSource;
+    NSString *_currentPlayerType; // "AVPlayer" or "VLC"
 }
 
 - (instancetype)initWithRegistrar:(NSObject<FlutterPluginRegistrar> *)registrar playerId:(NSString*)idParam loadConfiguration:(NSDictionary *)loadConfiguration useLazyPreparation:(BOOL)useLazyPreparation {
@@ -115,6 +120,11 @@
     _icyMetadata = @{};
     _errorCode = (NSNumber *)[NSNull null];
     _errorMessage = (NSString *)[NSNull null];
+    
+    // Initialize VLC-specific variables
+    _currentVlcSource = nil;
+    _currentPlayerType = @"AVPlayer"; // Default to AVPlayer
+    
     __weak __typeof__(self) weakSelf = self;
     [_methodChannel setMethodCallHandler:^(FlutterMethodCall* call, FlutterResult result) {
         [weakSelf handleMethodCall:call result:result];
@@ -476,6 +486,8 @@
         return [[UriAudioSource alloc] initWithId:data[@"id"] uri:data[@"uri"] loadControl:_loadControl headers:data[@"headers"] options:data[@"options"]];
     } else if ([@"hls" isEqualToString:type]) {
         return [[UriAudioSource alloc] initWithId:data[@"id"] uri:data[@"uri"] loadControl:_loadControl headers:data[@"headers"] options:data[@"options"]];
+    } else if ([@"webm" isEqualToString:type]) {
+        return [[WebMVlcAudioSource alloc] initWithId:data[@"id"] uri:data[@"uri"] headers:data[@"headers"] audioPlayer:self];
     } else if ([@"concatenating" isEqualToString:type]) {
         return [[ConcatenatingAudioSource alloc] initWithId:data[@"id"]
                                                audioSources:[self decodeAudioSources:data[@"children"]]
@@ -656,6 +668,18 @@
     } else {
         _audioSource = [self decodeAudioSource:source];
     }
+    
+    // Handle VLC player switching if needed
+    if ([_audioSource isKindOfClass:[WebMVlcAudioSource class]]) {
+        WebMVlcAudioSource *vlcSource = (WebMVlcAudioSource *)_audioSource;
+        [self switchToVlcPlayer:vlcSource];
+    } else {
+        // Switch back to AVPlayer if we were using VLC
+        if ([self isUsingVlcPlayer]) {
+            [self switchToAVPlayer];
+        }
+    }
+    
     _indexedAudioSources = [[NSMutableArray alloc] init];
     [_audioSource buildSequence:_indexedAudioSources treeIndex:0];
     for (int i = 0; i < [_indexedAudioSources count]; i++) {
@@ -1046,7 +1070,14 @@
         _playResult = result;
     }
     _playing = YES;
-    _player.rate = _speed;
+    
+    // Handle VLC or AVPlayer
+    if ([self isUsingVlcPlayer] && _currentVlcSource) {
+        [_currentVlcSource play];
+    } else {
+        _player.rate = _speed;
+    }
+    
     [self updatePosition];
     if (@available(macOS 10.12, iOS 10.0, *)) {}
     else {
@@ -1060,7 +1091,13 @@
 - (void)pause {
     if (!_playing) return;
     _playing = NO;
-    [_player pause];
+    
+    // Handle VLC or AVPlayer
+    if ([self isUsingVlcPlayer] && _currentVlcSource) {
+        [_currentVlcSource pause];
+    } else {
+        [_player pause];
+    }
     [self updatePosition];
     [self broadcastPlaybackEvent];
     if (_playResult) {
@@ -1382,10 +1419,101 @@
         }
         _player = nil;
     }
+    // Dispose VLC resources
+    if (_currentVlcSource) {
+        [_currentVlcSource stop];
+        _currentVlcSource = nil;
+    }
+    
     // Untested:
     [_eventChannel dispose];
     [_dataEventChannel dispose];
     [_methodChannel setMethodCallHandler:nil];
+}
+
+// MARK: - VLC Player Management
+
+- (void)switchToVlcPlayer:(WebMVlcAudioSource *)vlcSource {
+    // Stop current AVPlayer if playing
+    if ([_currentPlayerType isEqualToString:@"AVPlayer"] && _player) {
+        [_player pause];
+    }
+    
+    // Stop current VLC source if any
+    if (_currentVlcSource && _currentVlcSource != vlcSource) {
+        [_currentVlcSource stop];
+    }
+    
+    // Switch to VLC
+    _currentVlcSource = vlcSource;
+    _currentPlayerType = @"VLC";
+    
+    // Apply current state to VLC player
+    [vlcSource setVolume:_volume];
+    [vlcSource setRate:_speed];
+}
+
+- (void)switchToAVPlayer {
+    // Stop current VLC source if any
+    if (_currentVlcSource) {
+        [_currentVlcSource stop];
+        _currentVlcSource = nil;
+    }
+    
+    // Switch to AVPlayer
+    _currentPlayerType = @"AVPlayer";
+}
+
+- (BOOL)isUsingVlcPlayer {
+    return [_currentPlayerType isEqualToString:@"VLC"];
+}
+
+// MARK: - VLC Delegate Methods
+
+- (void)onVlcPlayerStateChanged:(WebMVlcAudioSource *)vlcSource {
+    if (vlcSource != _currentVlcSource) return;
+    
+    // Map VLC state to just_audio state and send events
+    VLCMediaPlayerState vlcState = vlcSource.vlcPlayer.state;
+    
+    switch (vlcState) {
+        case VLCMediaPlayerStatePlaying:
+            _playing = YES;
+            _processingState = psReady;
+            break;
+        case VLCMediaPlayerStatePaused:
+            _playing = NO;
+            _processingState = psReady;
+            break;
+        case VLCMediaPlayerStateStopped:
+            _playing = NO;
+            _processingState = psIdle;
+            break;
+        case VLCMediaPlayerStateEnded:
+            _playing = NO;
+            _processingState = psCompleted;
+            break;
+        case VLCMediaPlayerStateBuffering:
+            _processingState = psBuffering;
+            break;
+        case VLCMediaPlayerStateError:
+            _processingState = psIdle;
+            _errorCode = @(ERROR_ABORT);
+            _errorMessage = @"VLC player error";
+            break;
+        default:
+            break;
+    }
+    
+    [self enqueuePlaybackEvent];
+}
+
+- (void)onVlcPlayerTimeChanged:(WebMVlcAudioSource *)vlcSource {
+    if (vlcSource != _currentVlcSource) return;
+    
+    // Update position from VLC
+    [self updatePosition];
+    [self enqueuePlaybackEvent];
 }
 
 @end
